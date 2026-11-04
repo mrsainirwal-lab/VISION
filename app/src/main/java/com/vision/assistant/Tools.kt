@@ -28,9 +28,12 @@ object Tools {
     val all: JSONArray = JSONArray().apply {
         put(fn("open_app", "Open an installed app by its name, e.g. WhatsApp, Camera, Settings.",
             obj("name" to str("App name")), listOf("name")))
-        put(fn("set_alarm", "Set an alarm in the clock app.",
-            obj("hour" to int("0-23"), "minute" to int("0-59"), "label" to str("Alarm label")),
-            listOf("hour", "minute")))
+        put(fn("set_alarm", "Set an alarm in the clock app. Use minutes_from_now for relative times like 'in 10 minutes'. Otherwise use hour and minute in 24-hour format.",
+            obj("hour" to int("0-23"), "minute" to int("0-59"),
+                "minutes_from_now" to int("Minutes from now, e.g. 10"),
+                "label" to str("Alarm label")),
+            emptyList()))
+        put(fn("open_stopwatch", "Open the clock app so the user can use the stopwatch.", JSONObject()))
         put(fn("set_timer", "Start a countdown timer.",
             obj("seconds" to int("Duration in seconds"), "label" to str("Label")), listOf("seconds")))
         put(fn("dial_number", "Open the dialer with a number ready. The user presses call.",
