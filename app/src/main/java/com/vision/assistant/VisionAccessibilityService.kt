@@ -71,6 +71,7 @@ class VisionAccessibilityService : AccessibilityService() {
                 setColor(Color.parseColor("#CC3B9BFF"))
             }
             setOnClickListener {
+                AutoPilot.on = true
                 svc.startActivity(
                     Intent(svc, MainActivity::class.java)
                         .addFlags(
@@ -78,7 +79,7 @@ class VisionAccessibilityService : AccessibilityService() {
                                 Intent.FLAG_ACTIVITY_SINGLE_TOP or
                                 Intent.FLAG_ACTIVITY_CLEAR_TOP
                         )
-                        .putExtra("auto_listen", true)
+                        .putExtra("auto_pilot", true)
                 )
             }
         }
@@ -100,6 +101,7 @@ class VisionAccessibilityService : AccessibilityService() {
     }
 
     private fun hideOverlay() {
+        AutoPilot.on = false
         val v = overlay ?: return
         (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(v)
         overlay = null
