@@ -1,33 +1,28 @@
 package com.vision.assistant
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,31 +30,29 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+class MainActivity : ComponentActivity() {
 
-    private var tts: TextToSpeech? = null
+    private lateinit var actions: PhoneActions
+    private lateinit var brain: Brain
+    private lateinit var voice: Voice
     private var recognizer: SpeechRecognizer? = null
 
     private var state by mutableStateOf(VisionState.IDLE)
     private var heard by mutableStateOf("")
     private var reply by mutableStateOf("")
+    private var showSettings by mutableStateOf(false)
 
     private val micPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startListening()
-        else speak("I need microphone permission to hear you.")
+        if (granted) startListening() else say("I need microphone permission to hear you.")
     }
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) { state = VisionState.LISTENING }
         override fun onResults(results: Bundle?) {
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            if (text.isNullOrBlank()) {
-                speak("I didn't catch that.")
-            } else {
-                handle(text)
-            }
+            if (text.isNullOrBlank()) say("I didn't catch that.") else handle(text)
         }
         override fun onError(error: Int) { state = VisionState.IDLE }
         override fun onBeginningOfSpeech() {}
@@ -73,11 +66,14 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        tts = TextToSpeech(this, this)
+        actions = PhoneActions(this)
+        brain = Brain(this, actions)
+        voice = Voice(this)
+        voice.onSpeakStart = { runOnUiThread { state = VisionState.SPEAKING } }
+        voice.onSpeakDone = { runOnUiThread { state = VisionState.IDLE } }
+
         recognizer = if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            SpeechRecognizer.createSpeechRecognizer(this).apply {
-                setRecognitionListener(listener)
-            }
+            SpeechRecognizer.createSpeechRecognizer(this).apply { setRecognitionListener(listener) }
         } else {
             null
         }
@@ -85,13 +81,18 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    VisionScreen(
-                        state = state,
-                        heard = heard,
-                        reply = reply,
-                        onMic = { startListening() },
-                        onSendText = { handle(it) }
-                    )
+                    if (showSettings) {
+                        SettingsScreen(onBack = { showSettings = false })
+                    } else {
+                        VisionScreen(
+                            state = state,
+                            heard = heard,
+                            reply = reply,
+                            onMic = { startListening() },
+                            onSendText = { handle(it) },
+                            onSettings = { showSettings = true }
+                        )
+                    }
                 }
             }
         }
@@ -99,7 +100,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun startListening() {
         if (recognizer == null) {
-            speak("Speech recognition isn't available on this device.")
+            say("Speech recognition isn't available on this device.")
             return
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -117,37 +118,20 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
     private fun handle(text: String) {
         heard = text
+        reply = "..."
         lifecycleScope.launch {
-            val result = CommandProcessor.handle(text)
-            result.openUrl?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
-            speak(result.reply)
+            val answer = brain.process(text)
+            say(answer)
         }
     }
 
-    private fun speak(text: String) {
+    private fun say(text: String) {
         reply = text
-        val status = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "vision-${System.nanoTime()}")
-        if (status != TextToSpeech.SUCCESS) state = VisionState.IDLE
-    }
-
-    override fun onInit(status: Int) {
-        if (status != TextToSpeech.SUCCESS) return
-        tts?.language = Locale.US
-        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {
-                runOnUiThread { state = VisionState.SPEAKING }
-            }
-            override fun onDone(utteranceId: String?) {
-                runOnUiThread { state = VisionState.IDLE }
-            }
-            override fun onError(utteranceId: String?) {
-                runOnUiThread { state = VisionState.IDLE }
-            }
-        })
+        lifecycleScope.launch { voice.speak(text) }
     }
 
     override fun onDestroy() {
-        tts?.shutdown()
+        voice.shutdown()
         recognizer?.destroy()
         super.onDestroy()
     }
@@ -159,18 +143,24 @@ fun VisionScreen(
     heard: String,
     reply: String,
     onMic: () -> Unit,
-    onSendText: (String) -> Unit
+    onSendText: (String) -> Unit,
+    onSettings: () -> Unit
 ) {
     var typed by remember { mutableStateOf("") }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Text("VISION", color = Color.White, fontSize = 22.sp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("VISION", color = Color.White, fontSize = 22.sp)
+            TextButton(onClick = onSettings) { Text("Settings") }
+        }
 
         HologramOrb(state = state, modifier = Modifier.size(260.dp))
 
@@ -206,4 +196,80 @@ fun VisionScreen(
             }
         }
     }
+}
+
+@Composable
+fun SettingsScreen(onBack: () -> Unit) {
+    val ctx = LocalContext.current
+
+    var groq by remember { mutableStateOf(Keys.get(ctx, Keys.GROQ)) }
+    var gemini by remember { mutableStateOf(Keys.get(ctx, Keys.GEMINI)) }
+    var eleven1 by remember { mutableStateOf(Keys.get(ctx, Keys.ELEVEN_1)) }
+    var eleven2 by remember { mutableStateOf(Keys.get(ctx, Keys.ELEVEN_2)) }
+    var voiceId by remember { mutableStateOf(Keys.get(ctx, Keys.VOICE_ID)) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Settings", color = Color.White, fontSize = 22.sp)
+
+        SecretField("Groq API key", groq) { groq = it }
+        SecretField("Gemini API key", gemini) { gemini = it }
+        SecretField("ElevenLabs key (slot 1)", eleven1) { eleven1 = it }
+        SecretField("ElevenLabs key (slot 2)", eleven2) { eleven2 = it }
+
+        OutlinedTextField(
+            value = voiceId,
+            onValueChange = { voiceId = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("ElevenLabs voice ID") }
+        )
+
+        Button(
+            onClick = {
+                Keys.set(ctx, Keys.GROQ, groq)
+                Keys.set(ctx, Keys.GEMINI, gemini)
+                Keys.set(ctx, Keys.ELEVEN_1, eleven1)
+                Keys.set(ctx, Keys.ELEVEN_2, eleven2)
+                Keys.set(ctx, Keys.VOICE_ID, voiceId)
+                onBack()
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Save") }
+
+        OutlinedButton(
+            onClick = {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Enable phone control (Accessibility)") }
+
+        OutlinedButton(
+            onClick = {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Allow brightness control") }
+
+        TextButton(onClick = onBack) { Text("Back") }
+    }
+}
+
+@Composable
+fun SecretField(label: String, value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        label = { Text(label) },
+        visualTransformation = PasswordVisualTransformation()
+    )
 }
