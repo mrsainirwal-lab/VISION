@@ -38,12 +38,12 @@ object Tools {
         put(fn("send_sms", "Open the messages app with a prefilled text. The user presses send.",
             obj("number" to str("Phone number"), "message" to str("Message text")),
             listOf("number", "message")))
-            put(fn("play_music", "Play a song, artist or playlist. Opens Spotify search and taps the best match. Use for any music request.",
-        obj("query" to str("Song, artist or playlist name")), listOf("query")))
         put(fn("search_web", "Search Google.",
             obj("query" to str("Search query")), listOf("query")))
         put(fn("play_youtube", "Search YouTube for a song or video.",
             obj("query" to str("Song or video name")), listOf("query")))
+        put(fn("play_music", "Play a song, artist or playlist. Opens Spotify search and taps the best match. Use for any music request.",
+            obj("query" to str("Song, artist or playlist name")), listOf("query")))
         put(fn("open_url", "Open a website in the browser.",
             obj("url" to str("Full https URL")), listOf("url")))
         put(fn("set_volume", "Set media volume to a percentage.",
