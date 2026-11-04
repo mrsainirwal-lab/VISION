@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private var heard by mutableStateOf("")
     private var reply by mutableStateOf("")
     private var showSettings by mutableStateOf(false)
+    private var autoOn by mutableStateOf(false)
 
     private val micPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -52,9 +53,16 @@ class MainActivity : ComponentActivity() {
         override fun onReadyForSpeech(params: Bundle?) { state = VisionState.LISTENING }
         override fun onResults(results: Bundle?) {
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-            if (text.isNullOrBlank()) say("I didn't catch that.") else handle(text)
+            if (text.isNullOrBlank()) {
+                if (AutoPilot.on) restartListening(500) else say("I didn't catch that.")
+            } else {
+                handle(text)
+            }
         }
-        override fun onError(error: Int) { state = VisionState.IDLE }
+        override fun onError(error: Int) {
+            state = VisionState.IDLE
+            if (AutoPilot.on) restartListening(1000)
+        }
         override fun onBeginningOfSpeech() {}
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
@@ -70,7 +78,12 @@ class MainActivity : ComponentActivity() {
         brain = Brain(this, actions)
         voice = Voice(this)
         voice.onSpeakStart = { runOnUiThread { state = VisionState.SPEAKING } }
-        voice.onSpeakDone = { runOnUiThread { state = VisionState.IDLE } }
+        voice.onSpeakDone = {
+            runOnUiThread {
+                state = VisionState.IDLE
+                if (AutoPilot.on) restartListening(500)
+            }
+        }
 
         recognizer = if (SpeechRecognizer.isRecognitionAvailable(this)) {
             SpeechRecognizer.createSpeechRecognizer(this).apply { setRecognitionListener(listener) }
@@ -88,29 +101,54 @@ class MainActivity : ComponentActivity() {
                             state = state,
                             heard = heard,
                             reply = reply,
+                            autoOn = autoOn,
                             onMic = { startListening() },
                             onSendText = { handle(it) },
-                            onSettings = { showSettings = true }
+                            onSettings = { showSettings = true },
+                            onToggleAuto = { setAutoPilot(!autoOn) }
                         )
                     }
                 }
             }
         }
 
-        checkAutoListen(intent)
+        checkIntentExtras(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        checkAutoListen(intent)
+        checkIntentExtras(intent)
     }
 
-    private fun checkAutoListen(i: Intent?) {
-        if (i != null && i.getBooleanExtra("auto_listen", false)) {
+    private fun checkIntentExtras(i: Intent?) {
+        if (i == null) return
+        if (i.getBooleanExtra("auto_pilot", false)) {
+            i.removeExtra("auto_pilot")
+            setAutoPilot(true)
+        } else if (i.getBooleanExtra("auto_listen", false)) {
             i.removeExtra("auto_listen")
             window.decorView.postDelayed({ startListening() }, 300)
         }
+    }
+
+    private fun setAutoPilot(on: Boolean) {
+        AutoPilot.on = on
+        autoOn = on
+        if (on) {
+            if (state == VisionState.IDLE) startListening()
+            say("Auto pilot on. Main sun raha hoon.")
+        } else {
+            recognizer?.cancel()
+            state = VisionState.IDLE
+            say("Auto pilot off.")
+        }
+    }
+
+    private fun restartListening(delayMs: Long) {
+        window.decorView.postDelayed({
+            if (AutoPilot.on && state == VisionState.IDLE) startListening()
+        }, delayMs)
     }
 
     private fun startListening() {
@@ -132,7 +170,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handle(text: String) {
+        val lower = text.lowercase()
         heard = text
+
+        if (lower.contains("auto pilot band") || lower.contains("stop auto pilot") || lower.contains("auto pilot off")) {
+            setAutoPilot(false)
+            return
+        }
+        if (lower.contains("auto pilot on") || lower.contains("auto pilot shuru")) {
+            setAutoPilot(true)
+            return
+        }
+
         reply = "..."
         lifecycleScope.launch {
             val answer = brain.process(text)
@@ -146,6 +195,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        AutoPilot.on = false
         voice.shutdown()
         recognizer?.destroy()
         super.onDestroy()
@@ -157,9 +207,11 @@ fun VisionScreen(
     state: VisionState,
     heard: String,
     reply: String,
+    autoOn: Boolean,
     onMic: () -> Unit,
     onSendText: (String) -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    onToggleAuto: () -> Unit
 ) {
     var typed by remember { mutableStateOf("") }
 
@@ -208,6 +260,10 @@ fun VisionScreen(
                         typed = ""
                     }
                 }) { Text("Send") }
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick = onToggleAuto, modifier = Modifier.fillMaxWidth()) {
+                Text(if (autoOn) "Auto-pilot: ON (tap to stop)" else "Auto-pilot: OFF (tap to start)")
             }
         }
     }
