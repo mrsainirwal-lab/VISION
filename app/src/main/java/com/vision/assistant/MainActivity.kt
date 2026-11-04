@@ -96,6 +96,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        checkAutoListen(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        checkAutoListen(intent)
+    }
+
+    private fun checkAutoListen(i: Intent?) {
+        if (i != null && i.getBooleanExtra("auto_listen", false)) {
+            i.removeExtra("auto_listen")
+            window.decorView.postDelayed({ startListening() }, 300)
+        }
     }
 
     private fun startListening() {
