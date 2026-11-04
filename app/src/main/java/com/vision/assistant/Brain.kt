@@ -26,13 +26,19 @@ class Brain(private val ctx: Context, private val actions: PhoneActions) {
 
     companion object {
         private const val MAX_TRIES = 8
+        private const val MAX_HISTORY = 40
     }
 
+    // Conversation memory for this app session (user, assistant and tool messages)
+    private val history = mutableListOf<JSONObject>()
+
     private val system = """
-        You are Vision, a voice assistant on an Android phone. Keep answers short and natural.
-        Reply in the language the user speaks (English, Hindi, or Hinglish).
-        When the user asks for a phone action, use the provided tools.
-        Never say an action worked unless the tool result says it worked.
+        You are Vision, a smart and friendly phone assistant with a bit of personality: warm, witty, never rude.
+        Reply in the language the user speaks (English, Hindi or Hinglish). Keep replies short.
+        Use the conversation history. If the user says "yes", "haan", "confirm", "kar do", "same", "wahi" or "again", find what you last proposed or did and do exactly that. Never ask "confirm what?" when the history already shows it.
+        Understand short commands. "Spotify faded" or "faded play karo" means play the song Faded: call play_music with query "Faded". Use tools for every phone action.
+        For risky actions (calls, sending messages, deleting, payments, installing apps, changing important settings), first describe exactly what you will do in one sentence and ask yes or no. Act only after a yes.
+        Never say an action worked unless the tool result says it worked. If a tool fails, say so and suggest the next step.
     """.trimIndent()
 
     private val excluded = listOf(
@@ -40,7 +46,6 @@ class Brain(private val ctx: Context, private val actions: PhoneActions) {
         "veo", "aqa", "computer-use", "whisper", "guard", "orpheus", "prompt"
     )
 
-    // Model lists fetched from the providers, kept for this app session
     private val cache = HashMap<String, List<String>>()
 
     private fun providers(): List<Provider> = listOf(
@@ -131,40 +136,57 @@ class Brain(private val ctx: Context, private val actions: PhoneActions) {
         return out.take(MAX_TRIES)
     }
 
+    private fun msg(role: String, content: String): JSONObject =
+        JSONObject().put("role", role).put("content", content)
+
+    private fun trimHistory() {
+        while (history.size > MAX_HISTORY) history.removeAt(0)
+        // Always start the remembered history with a user message so tool messages stay valid
+        while (history.isNotEmpty() && history[0].optString("role") != "user") history.removeAt(0)
+    }
+
     suspend fun process(userText: String): String {
         val targets = buildTargets()
         if (targets.isEmpty()) {
             return "Settings me kam se kam ek AI key daalo: Gemini, Groq ya OpenRouter."
         }
 
-        val base = JSONArray()
-            .put(JSONObject().put("role", "system").put("content", system))
-            .put(JSONObject().put("role", "user").put("content", userText))
+        history.add(msg("user", userText))
+        trimHistory()
 
         var last = ""
         for (t in targets) {
+            val snapshot = history.toList()
             try {
-                return runConversation(t, JSONArray(base.toString()))
+                val answer = runConversation(t)
+                trimHistory()
+                return answer
             } catch (e: ActionRanException) {
+                trimHistory()
                 return "Action ho gaya, lekin AI ka jawab nahi aaya: ${e.message}"
             } catch (e: Exception) {
+                // Restore memory so the next model gets the same context
+                history.clear()
+                history.addAll(snapshot)
                 last = "${t.provider.name} ${t.model}: ${e.message}"
             }
         }
         return "Sab AI models fail hue. Last error: $last"
     }
 
-    private suspend fun runConversation(t: Target, messages: JSONArray): String {
+    private suspend fun runConversation(t: Target): String {
         var actionsRan = false
         try {
             for (step in 0 until 5) {
-                val message = callApi(t, messages)
+                val message = callApi(t)
                 val toolCalls = message.optJSONArray("tool_calls")
                 if (toolCalls == null || toolCalls.length() == 0) {
-                    return message.optString("content", "").ifBlank { "Done." }
+                    val text = message.optString("content", "").ifBlank { "Done." }
+                    history.add(msg("assistant", text))
+                    return text
                 }
 
-                messages.put(message)
+                history.add(message)
                 for (i in 0 until toolCalls.length()) {
                     val call = toolCalls.getJSONObject(i)
                     val fn = call.getJSONObject("function")
@@ -177,7 +199,7 @@ class Brain(private val ctx: Context, private val actions: PhoneActions) {
                     val result = withContext(Dispatchers.Main) {
                         actions.run(fn.getString("name"), args)
                     }
-                    messages.put(
+                    history.add(
                         JSONObject()
                             .put("role", "tool")
                             .put("tool_call_id", call.getString("id"))
@@ -193,8 +215,11 @@ class Brain(private val ctx: Context, private val actions: PhoneActions) {
         }
     }
 
-    private suspend fun callApi(t: Target, messages: JSONArray): JSONObject =
+    private suspend fun callApi(t: Target): JSONObject =
         withContext(Dispatchers.IO) {
+            val messages = JSONArray().put(msg("system", system))
+            history.forEach { messages.put(it) }
+
             val conn = (URL(t.provider.baseUrl + "chat/completions").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 15_000
