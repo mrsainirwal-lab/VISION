@@ -202,8 +202,9 @@ fun VisionScreen(
 fun SettingsScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
 
-    var groq by remember { mutableStateOf(Keys.get(ctx, Keys.GROQ)) }
     var gemini by remember { mutableStateOf(Keys.get(ctx, Keys.GEMINI)) }
+    var groq by remember { mutableStateOf(Keys.get(ctx, Keys.GROQ)) }
+    var openrouter by remember { mutableStateOf(Keys.get(ctx, Keys.OPENROUTER)) }
     var eleven1 by remember { mutableStateOf(Keys.get(ctx, Keys.ELEVEN_1)) }
     var eleven2 by remember { mutableStateOf(Keys.get(ctx, Keys.ELEVEN_2)) }
     var voiceId by remember { mutableStateOf(Keys.get(ctx, Keys.VOICE_ID)) }
@@ -214,8 +215,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     ) {
         Text("Settings", color = Color.White, fontSize = 22.sp)
 
-        SecretField("Groq API key", groq) { groq = it }
         SecretField("Gemini API key", gemini) { gemini = it }
+        SecretField("Groq API key", groq) { groq = it }
+        SecretField("OpenRouter API key (free models)", openrouter) { openrouter = it }
         SecretField("ElevenLabs key (slot 1)", eleven1) { eleven1 = it }
         SecretField("ElevenLabs key (slot 2)", eleven2) { eleven2 = it }
 
@@ -229,8 +231,9 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         Button(
             onClick = {
-                Keys.set(ctx, Keys.GROQ, groq)
                 Keys.set(ctx, Keys.GEMINI, gemini)
+                Keys.set(ctx, Keys.GROQ, groq)
+                Keys.set(ctx, Keys.OPENROUTER, openrouter)
                 Keys.set(ctx, Keys.ELEVEN_1, eleven1)
                 Keys.set(ctx, Keys.ELEVEN_2, eleven2)
                 Keys.set(ctx, Keys.VOICE_ID, voiceId)
