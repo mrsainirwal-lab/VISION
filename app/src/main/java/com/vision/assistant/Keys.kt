@@ -11,7 +11,7 @@ object Keys {
     const val ELEVEN_1 = "eleven_key_1"
     const val ELEVEN_2 = "eleven_key_2"
     const val VOICE_ID = "eleven_voice_id"
-
+const val OPENROUTER = "openrouter_key"
     private var prefs: SharedPreferences? = null
 
     private fun prefs(ctx: Context): SharedPreferences {
