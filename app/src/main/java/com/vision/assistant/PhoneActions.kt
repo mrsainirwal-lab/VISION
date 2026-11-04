@@ -1,5 +1,6 @@
 package com.vision.assistant
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -15,6 +16,7 @@ import android.provider.Settings
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -24,23 +26,20 @@ class PhoneActions(private val ctx: Context) {
         when (name) {
             "open_app" -> openApp(a.getString("name"))
             "set_alarm" -> {
-                start(
-                    Intent(AlarmClock.ACTION_SET_ALARM)
-                        .putExtra(AlarmClock.EXTRA_HOUR, a.getInt("hour"))
-                        .putExtra(AlarmClock.EXTRA_MINUTES, a.getInt("minute"))
-                        .putExtra(AlarmClock.EXTRA_MESSAGE, a.optString("label", "Vision alarm"))
-                        .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                )
-                "Alarm set."
+                if (a.has("minutes_from_now")) {
+                    val c = Calendar.getInstance()
+                    c.add(Calendar.MINUTE, a.getInt("minutes_from_now"))
+                    setAlarm(c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), a.optString("label", "Vision alarm"))
+                } else {
+                    setAlarm(a.getInt("hour"), a.getInt("minute"), a.optString("label", "Vision alarm"))
+                }
             }
-            "set_timer" -> {
-                start(
-                    Intent(AlarmClock.ACTION_SET_TIMER)
-                        .putExtra(AlarmClock.EXTRA_LENGTH, a.getInt("seconds"))
-                        .putExtra(AlarmClock.EXTRA_MESSAGE, a.optString("label", "Vision timer"))
-                        .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                )
-                "Timer started."
+            "set_timer" -> setTimer(a.getInt("seconds"), a.optString("label", "Vision timer"))
+            "open_stopwatch" -> {
+                if (tryStart(Intent(AlarmClock.ACTION_SHOW_ALARMS)))
+                    "Clock khola. Stopwatch tab par tap karke start karo."
+                else
+                    "Clock app nahi mili."
             }
             "dial_number" -> {
                 start(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${a.getString("number")}")))
@@ -102,11 +101,44 @@ class PhoneActions(private val ctx: Context) {
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
+    // Starts an activity and returns false if no app can handle it (instead of crashing)
+    private fun tryStart(i: Intent): Boolean = try {
+        ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    } catch (e: ActivityNotFoundException) {
+        false
+    }
+
     private fun start(i: Intent) {
         ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     private fun open(url: String) = start(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+
+    private fun setAlarm(hour: Int, minute: Int, label: String): String {
+        if (hour !in 0..23 || minute !in 0..59) return "Galat time diya gaya."
+        val ok = tryStart(
+            Intent(AlarmClock.ACTION_SET_ALARM)
+                .putExtra(AlarmClock.EXTRA_HOUR, hour)
+                .putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                .putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+        )
+        return if (ok) "Alarm set for %02d:%02d.".format(hour, minute)
+        else "Clock app alarm set nahi kar payi. Phone me clock app check karo."
+    }
+
+    private fun setTimer(seconds: Int, label: String): String {
+        if (seconds <= 0) return "Galat timer duration."
+        val ok = tryStart(
+            Intent(AlarmClock.ACTION_SET_TIMER)
+                .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+                .putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+        )
+        return if (ok) "Timer started for $seconds seconds."
+        else "Clock app timer set nahi kar payi. Phone me clock app check karo."
+    }
 
     private fun playMusic(query: String): String {
         val q = query.trim()
