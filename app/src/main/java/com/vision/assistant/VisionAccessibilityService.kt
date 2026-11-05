@@ -10,10 +10,15 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewConfiguration
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.TextView
+import android.widget.ImageView
+import kotlin.math.abs
 
 class VisionAccessibilityService : AccessibilityService() {
 
@@ -22,12 +27,27 @@ class VisionAccessibilityService : AccessibilityService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
+    private val touchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
+
     private var volUp = false
     private var volDown = false
-    private var overlay: TextView? = null
 
-    private val showTask = Runnable { showOverlay() }
-    private val hideTask = Runnable { hideOverlay() }
+    private var bubble: ImageView? = null
+    private var bubbleParams: WindowManager.LayoutParams? = null
+
+    private var downX = 0f
+    private var downY = 0f
+    private var startX = 0
+    private var startY = 0
+    private var dragging = false
+    private var longPressed = false
+
+    private val showTask = Runnable { showBubble() }
+    private val longPressTask = Runnable {
+        longPressed = true
+        disableBubble()
+    }
 
     override fun onServiceConnected() {
         instance = this
@@ -37,7 +57,7 @@ class VisionAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    // Volume + and - together: short press shows the bubble, hold for 2 sec hides it
+    // Volume + and - together for 0.1 sec shows the bubble
     override fun onKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
         if (code != KeyEvent.KEYCODE_VOLUME_UP && code != KeyEvent.KEYCODE_VOLUME_DOWN) return false
@@ -48,67 +68,110 @@ class VisionAccessibilityService : AccessibilityService() {
         if (code == KeyEvent.KEYCODE_VOLUME_UP) volUp = down else volDown = down
 
         handler.removeCallbacks(showTask)
-        handler.removeCallbacks(hideTask)
-        if (volUp && volDown) {
-            if (overlay == null) handler.postDelayed(showTask, 600)
-            else handler.postDelayed(hideTask, 2000)
+        if (volUp && volDown && bubble == null) {
+            handler.postDelayed(showTask, 100)
         }
         return false
     }
 
-    private fun showOverlay() {
-        if (overlay != null) return
-        val svc = this
-        val size = (60 * resources.displayMetrics.density).toInt()
+    private fun showBubble() {
+        if (bubble != null) return
+        val size = (64 * resources.displayMetrics.density).toInt()
 
-        val view = TextView(svc).apply {
-            text = "V"
-            setTextColor(Color.WHITE)
-            textSize = 20f
-            gravity = Gravity.CENTER
+        val view = ImageView(this).apply {
+            setImageResource(R.mipmap.ic_launcher)
+            scaleType = ImageView.ScaleType.CENTER_CROP
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#CC3B9BFF"))
+                setColor(Color.parseColor("#22000000"))
             }
-            setOnClickListener {
-                AutoPilot.on = true
-                svc.startActivity(
-                    Intent(svc, MainActivity::class.java)
-                        .addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or
-                                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                                Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        )
-                        .putExtra("auto_pilot", true)
-                )
-            }
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            setOnTouchListener(touchListener)
         }
 
-        val params = WindowManager.LayoutParams(
+        val lp = WindowManager.LayoutParams(
             size,
             size,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.END or Gravity.BOTTOM
-            x = 24
-            y = 200
+            gravity = Gravity.TOP or Gravity.START
+            x = resources.displayMetrics.widthPixels - size - 24
+            y = resources.displayMetrics.heightPixels / 2
         }
 
-        (getSystemService(WINDOW_SERVICE) as WindowManager).addView(view, params)
-        overlay = view
+        wm.addView(view, lp)
+        bubble = view
+        bubbleParams = lp
     }
 
-    private fun hideOverlay() {
+    private val touchListener = View.OnTouchListener { v, e ->
+        val lp = bubbleParams ?: return@OnTouchListener false
+        when (e.action) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.rawX
+                downY = e.rawY
+                startX = lp.x
+                startY = lp.y
+                dragging = false
+                longPressed = false
+                handler.postDelayed(longPressTask, 2000)
+                true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = e.rawX - downX
+                val dy = e.rawY - downY
+                if (!dragging && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+                    dragging = true
+                    handler.removeCallbacks(longPressTask)
+                }
+                if (dragging) {
+                    lp.x = startX + dx.toInt()
+                    lp.y = startY + dy.toInt()
+                    wm.updateViewLayout(v, lp)
+                }
+                true
+            }
+            MotionEvent.ACTION_UP -> {
+                handler.removeCallbacks(longPressTask)
+                if (!dragging && !longPressed) openVision()
+                true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(longPressTask)
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun openVision() {
+        AutoPilot.on = true
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+                .putExtra("auto_pilot", true)
+        )
+    }
+
+    // Long press (2 sec) on the bubble turns it off
+    private fun disableBubble() {
         AutoPilot.on = false
-        val v = overlay ?: return
-        (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(v)
-        overlay = null
+        bubble?.let { wm.removeView(it) }
+        bubble = null
+        bubbleParams = null
     }
 
     override fun onDestroy() {
-        hideOverlay()
+        handler.removeCallbacks(showTask)
+        handler.removeCallbacks(longPressTask)
+        disableBubble()
         instance = null
         super.onDestroy()
     }
