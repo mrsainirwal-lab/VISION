@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -113,6 +115,21 @@ class MainActivity : ComponentActivity() {
         }
 
         checkIntentExtras(intent)
+
+        // Startup line, only when the app is opened normally (not from the bubble)
+        if (savedInstanceState == null && intent?.getBooleanExtra("auto_pilot", false) != true) {
+            window.decorView.postDelayed({
+                say("Vision online, everything is under control sir. " + internetLine())
+            }, 800)
+        }
+    }
+
+    private fun internetLine(): String {
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val net = cm?.activeNetwork
+        val caps = if (net != null) cm.getNetworkCapabilities(net) else null
+        val online = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        return if (online) "Internet connected hai." else "Internet connected nahi hai."
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -321,6 +338,15 @@ fun SettingsScreen(onBack: () -> Unit) {
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Enable phone control (Accessibility)") }
+
+        OutlinedButton(
+            onClick = {
+                ctx.startActivity(
+                    Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Allow usage access (battery app info)") }
 
         OutlinedButton(
             onClick = {
