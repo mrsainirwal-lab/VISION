@@ -1,5 +1,6 @@
 package com.vision.assistant
 
+import android.app.usage.UsageStatsManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -217,6 +218,7 @@ class PhoneActions(private val ctx: Context) {
         return "Opened $page. Android does not let apps switch Wi-Fi or Bluetooth directly, so please tap the toggle."
     }
 
+    // Battery percentage, charging state, and the app used most in the last 24 hours
     private fun battery(): String {
         val i = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             ?: return "Battery status is unknown."
@@ -225,6 +227,32 @@ class PhoneActions(private val ctx: Context) {
         val status = i.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
                 status == BatteryManager.BATTERY_STATUS_FULL
-        return "Battery is at ${level * 100 / scale} percent, ${if (charging) "charging" else "not charging"}."
+        val pct = level * 100 / scale
+        val base = "Battery $pct percent, ${if (charging) "charging" else "not charging"}."
+        val top = topAppLast24h()
+        return if (top != null) {
+            "$base Pichle 24 ghante me sabse zyada use hua app: $top."
+        } else {
+            "$base App usage dikhane ke liye Settings me Usage access ON karo."
+        }
+    }
+
+    private fun topAppLast24h(): String? {
+        val usm = ctx.getSystemService(UsageStatsManager::class.java) ?: return null
+        val end = System.currentTimeMillis()
+        val start = end - 24L * 60 * 60 * 1000
+        val stats = usm.queryAndAggregateUsageStats(start, end)
+        if (stats.isNullOrEmpty()) return null
+        val best = stats.values
+            .filter { it.totalTimeInForeground > 0 }
+            .maxByOrNull { it.totalTimeInForeground } ?: return null
+        val pm = ctx.packageManager
+        val label = try {
+            pm.getApplicationLabel(pm.getApplicationInfo(best.packageName, 0)).toString()
+        } catch (e: Exception) {
+            best.packageName
+        }
+        val mins = best.totalTimeInForeground / 60000
+        return "$label ($mins min)"
     }
 }
