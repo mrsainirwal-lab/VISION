@@ -101,43 +101,46 @@ class PhoneActions(private val ctx: Context) {
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
-    // Starts an activity and returns false if no app can handle it (instead of crashing)
+    // Starts an activity and returns false if no app can handle it
     private fun tryStart(i: Intent): Boolean = try {
-        ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        ctx.startActivity(Intent(i).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         true
     } catch (e: ActivityNotFoundException) {
         false
     }
 
     private fun start(i: Intent) {
-        ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        ctx.startActivity(Intent(i).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     private fun open(url: String) = start(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
 
+    // Try 1: set silently. Try 2: open clock with time filled in (user taps Save).
     private fun setAlarm(hour: Int, minute: Int, label: String): String {
         if (hour !in 0..23 || minute !in 0..59) return "Galat time diya gaya."
-        val ok = tryStart(
-            Intent(AlarmClock.ACTION_SET_ALARM)
-                .putExtra(AlarmClock.EXTRA_HOUR, hour)
-                .putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                .putExtra(AlarmClock.EXTRA_MESSAGE, label)
-                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-        )
-        return if (ok) "Alarm set for %02d:%02d.".format(hour, minute)
-        else "Clock app alarm set nahi kar payi. Phone me clock app check karo."
+        val base = Intent(AlarmClock.ACTION_SET_ALARM)
+            .putExtra(AlarmClock.EXTRA_HOUR, hour)
+            .putExtra(AlarmClock.EXTRA_MINUTES, minute)
+            .putExtra(AlarmClock.EXTRA_MESSAGE, label)
+        val time = "%02d:%02d".format(hour, minute)
+
+        if (tryStart(Intent(base).putExtra(AlarmClock.EXTRA_SKIP_UI, true)))
+            return "Alarm set for $time."
+        if (tryStart(Intent(base)))
+            return "Clock khul gaya, $time ka alarm bhar diya hai. Save dabao."
+        return "Clock app alarm nahi khol payi. Phone me Clock app check karo."
     }
 
     private fun setTimer(seconds: Int, label: String): String {
         if (seconds <= 0) return "Galat timer duration."
-        val ok = tryStart(
-            Intent(AlarmClock.ACTION_SET_TIMER)
-                .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-                .putExtra(AlarmClock.EXTRA_MESSAGE, label)
-                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-        )
-        return if (ok) "Timer started for $seconds seconds."
-        else "Clock app timer set nahi kar payi. Phone me clock app check karo."
+        val base = Intent(AlarmClock.ACTION_SET_TIMER)
+            .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+            .putExtra(AlarmClock.EXTRA_MESSAGE, label)
+        if (tryStart(Intent(base).putExtra(AlarmClock.EXTRA_SKIP_UI, true)))
+            return "Timer started for $seconds seconds."
+        if (tryStart(Intent(base)))
+            return "Clock khul gaya, timer bhar diya hai. Start dabao."
+        return "Clock app timer nahi khol payi. Phone me Clock app check karo."
     }
 
     private fun playMusic(query: String): String {
